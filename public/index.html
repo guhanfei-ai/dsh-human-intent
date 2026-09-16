@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Human Intent — Authorization</title>
+  <link rel="stylesheet" href="/style.css">
+  <script defer src="/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">&#9878;</span>
+      <span class="brand-name">Human Intent</span>
+      <span class="brand-sub">AI can propose an action. Only a human can authorize it.</span>
+    </div>
+    <span id="credential-state" class="credential-state">checking…</span>
+  </header>
+
+  <main id="main" class="main">
+    <section id="setup" class="card hidden">
+      <h2>No passkey registered</h2>
+      <p class="muted">
+        A passkey (platform authenticator: Touch ID, Windows Hello, or a security key) is required
+        before any action can be authorized. Register once on this machine.
+      </p>
+      <button id="register-button" class="button primary">Register passkey</button>
+      <p id="register-error" class="error" hidden></p>
+    </section>
+
+    <section id="approval" class="card hidden">
+      <div class="approval-head">
+        <h2>Agent requests authorization</h2>
+        <span id="risk-badge" class="risk-badge">risk</span>
+      </div>
+      <p class="muted" id="expiry-line">expires …</p>
+
+      <dl class="action-grid">
+        <div class="action-row"><dt>Tool</dt><dd id="action-tool" class="mono"></dd></div>
+        <div class="action-row"><dt>Operation</dt><dd id="action-operation" class="mono"></dd></div>
+        <div class="action-row"><dt>Target</dt><dd id="action-target" class="mono"></dd></div>
+        <div class="action-row"><dt>Reason</dt><dd id="action-reason"></dd></div>
+        <div class="action-row"><dt>Intent hash</dt><dd id="action-hash" class="mono hash"></dd></div>
+        <div class="action-row"><dt>Nonce</dt><dd id="action-nonce" class="mono hash"></dd></div>
+      </dl>
+
+      <div class="arguments">
+        <div class="arguments-head">
+          <span>Exact arguments (what will be signed)</span>
+          <span class="muted">A different value means a different authorization.</span>
+        </div>
+        <pre id="action-arguments" class="mono arguments-body"></pre>
+      </div>
+
+      <div class="decision-row">
+        <button id="approve-button" class="button primary large">Approve with passkey</button>
+        <button id="deny-button" class="button danger large">Deny</button>
+      </div>
+      <p id="approval-status" class="muted" aria-live="polite"></p>
+    </section>
+
+    <section id="idle" class="card hidden">
+      <h2>No pending authorization requests</h2>
+      <p class="muted">
+        When an agent proposes a protected action, an authorization request appears here and in the
+        DSH sidebar. Nothing executes until a human approves the exact action shown above.
+      </p>
+    </section>
+
+    <section id="settled" class="card hidden">
+      <h2 id="settled-title"></h2>
+      <pre id="settled-detail" class="mono settled-detail"></pre>
+      <p class="muted"><a href="/">Back to overview</a></p>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span class="muted">What you see is what you sign — the passkey signature covers the intent hash of the exact action above.</span>
+  </footer>
+</body>
+</html>

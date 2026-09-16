@@ -1,0 +1,78 @@
+{
+  "name": "dsh-human-intent",
+  "version": "0.1.0",
+  "description": "Human intent verification and cryptographic action authorization for AI agents. AI can propose an action. Only a human can authorize it.",
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "dsh-human-intent": "bin/dsh-human-intent.js"
+  },
+  "scripts": {
+    "build:client": "node scripts/build-client.mjs",
+    "build": "npm run build:client",
+    "lint": "node scripts/lint.mjs",
+    "test": "node --test",
+    "smoke": "node scripts/smoke.mjs",
+    "check": "npm run build:client && npm run lint",
+    "verify": "npm run check && npm test && npm run smoke",
+    "demo": "node bin/dsh-human-intent.js demo",
+    "serve": "node bin/dsh-human-intent.js serve",
+    "prepack": "npm run verify"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "bin/",
+    "public/",
+    "src/",
+    "scripts/build-client.mjs",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.0",
+    "@simplewebauthn/server": "^13.1.1",
+    "canonicalize": "^2.1.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": ">=0.1.1-rc.0",
+    "dsh-better-sidebar": ">=0.10.0"
+  },
+  "peerDependenciesMeta": {
+    "dsh-better-sidebar": { "optional": true }
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-cordis-client-runner",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-settings-plugins"
+      ],
+      "platform": "web",
+      "immediately": true
+    }
+  },
+  "engines": { "node": ">=20.11" },
+  "license": "MIT",
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "human-in-the-loop",
+    "human-intent",
+    "action-authorization",
+    "webauthn",
+    "passkey",
+    "ai-safety"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./core": "./src/service.js",
+    "./package.json": "./package.json"
+  }
+}
