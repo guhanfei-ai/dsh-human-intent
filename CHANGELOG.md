@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Security
+
+- Make IntentReceipt consumption concurrency-safe: a per-requestId
+  single-flight reservation guarantees that concurrent `consumeReceipt`
+  calls for the same receipt yield exactly one success (previously a
+  check-then-act race could let multiple submissions pass). Failed
+  verifications release their reservation without consuming the receipt,
+  so legitimate retries stay possible. The guarantee is process-local,
+  matching the existing replay state.
+
 ## 0.1.0 — 2026-09-17
 
 First release: the Human Intent authorization protocol, evolved from

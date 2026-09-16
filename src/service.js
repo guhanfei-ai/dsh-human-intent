@@ -60,6 +60,12 @@ export class IntentService {
     this.requestTtlMs = requestTtlMs
     this.pending = new Map()
     this.consumed = new Map()
+    // Per-requestId in-flight consumption reservations (single-flight).
+    // A held slot is a reservation, NOT a consumption; entries are always
+    // removed in a finally block. The replay/consumption guarantee enforced
+    // through these maps is process-local unless persistent state is
+    // configured (consumed entries are reloaded from the audit log).
+    this.consumptionLocks = new Map()
     this.registrationChallenges = new Map()
     this.listeners = new Set()
     this.initialized = false
@@ -264,7 +270,9 @@ export class IntentService {
    *  5. recomputing the hash with the SUBMITTED action yields the same
    *     intentHash  (this is the action-mutation defense: tool B or args Y
    *     produce a different hash and are rejected)
-   *  6. the request was never consumed before (replay defense)
+   *  6. the request was never consumed before (replay defense), and no
+   *     concurrent consumption of it is in flight (per-requestId
+   *     single-flight reservation; exactly one concurrent caller wins)
    *  7. the embedded WebAuthn assertion still verifies against the stored
    *     credential public key (forged receipts cannot pass)
    *
@@ -299,40 +307,69 @@ export class IntentService {
     if (this.consumed.has(receipt.requestId)) {
       this.#rejectConsumption(receipt.intent, 'already_consumed', 'receipt has already been consumed; one authorization authorizes one execution')
     }
-    const credential = await this.credentials.get(receipt.authenticator.credentialId)
-    if (!credential) {
-      this.#rejectConsumption(receipt.intent, 'credential_unknown', 'authorizing credential no longer exists on this host')
+    // Single-flight reservation: claim this requestId's consumption slot
+    // BEFORE the first await. Everything from the `consumed.has` check above
+    // through `consumptionLocks.set` below runs synchronously (no await),
+    // and JS's run-to-completion model makes that section atomic, which is
+    // what actually closes the check-then-act race.
+    //
+    // A reservation is not a consumption: if the holder's verification
+    // fails it releases the slot without touching `consumed`, so a failed
+    // or hostile attempt can never permanently block a legitimate retry.
+    while (this.consumptionLocks.has(receipt.requestId)) {
+      const inFlight = this.consumptionLocks.get(receipt.requestId)
+      await inFlight.promise
+      if (this.consumed.has(receipt.requestId)) {
+        this.#rejectConsumption(receipt.intent, 'already_consumed', 'receipt has already been consumed; one authorization authorizes one execution')
+      }
     }
-    let verification
+    let releaseSlot
+    const slot = new Promise((resolve) => { releaseSlot = resolve })
+    this.consumptionLocks.set(receipt.requestId, { promise: slot })
     try {
-      verification = await this.authenticator.verifyAuthorization(receipt.intent, receipt.assertion, credential)
-    } catch (error) {
-      this.#rejectConsumption(receipt.intent, 'verification_failed', `receipt signature verification failed: ${error.message}`)
-    }
-    // One-shot: mark consumed BEFORE any caller-visible success so concurrent
-    // submissions cannot both pass the replay check (check-then-act race).
-    this.consumed.set(receipt.requestId, { consumedAt: new Date().toISOString(), expiresAt: receipt.expiresAt })
-    try {
-      await this.credentials.updateCounter(credential.id, verification.newCounter)
-    } catch (error) {
-      this.consumed.delete(receipt.requestId)
-      throw new IntentConsumptionError(`credential counter update failed: ${error.message}`, 'counter_update_failed')
-    }
-    await this.audit.record({
-      event: 'consumed',
-      ...this.#auditEntryFor(receipt.intent),
-      decision: 'approved',
-      executionStatus: 'authorized',
-      verificationMethod: 'webauthn',
-      credentialRef: credentialRef(credential.id),
-    })
-    this.#pruneConsumed()
-    return {
-      ok: true,
-      requestId: receipt.requestId,
-      intentHash: receipt.intentHash,
-      tool: action?.tool ?? receipt.intent.action.tool,
-      authorizedAction: receipt.intent.action,
+      const credential = await this.credentials.get(receipt.authenticator.credentialId)
+      if (!credential) {
+        this.#rejectConsumption(receipt.intent, 'credential_unknown', 'authorizing credential no longer exists on this host')
+      }
+      let verification
+      try {
+        verification = await this.authenticator.verifyAuthorization(receipt.intent, receipt.assertion, credential)
+      } catch (error) {
+        this.#rejectConsumption(receipt.intent, 'verification_failed', `receipt signature verification failed: ${error.message}`)
+      }
+      // One-shot: mark consumed while holding the slot, before any
+      // caller-visible success. The slot reservation above already excludes
+      // concurrent submissions; this entry is what persists for sequential
+      // replay protection (and is reloaded from the audit log at startup).
+      this.consumed.set(receipt.requestId, { consumedAt: new Date().toISOString(), expiresAt: receipt.expiresAt })
+      try {
+        await this.credentials.updateCounter(credential.id, verification.newCounter)
+      } catch (error) {
+        this.consumed.delete(receipt.requestId)
+        throw new IntentConsumptionError(`credential counter update failed: ${error.message}`, 'counter_update_failed')
+      }
+      await this.audit.record({
+        event: 'consumed',
+        ...this.#auditEntryFor(receipt.intent),
+        decision: 'approved',
+        executionStatus: 'authorized',
+        verificationMethod: 'webauthn',
+        credentialRef: credentialRef(credential.id),
+      })
+      this.#pruneConsumed()
+      return {
+        ok: true,
+        requestId: receipt.requestId,
+        intentHash: receipt.intentHash,
+        tool: action?.tool ?? receipt.intent.action.tool,
+        authorizedAction: receipt.intent.action,
+      }
+    } finally {
+      // Success or failure, the reservation is always released; waiters
+      // re-check `consumed` on wake-up, so a failed holder cannot wedge a
+      // requestId and a successful holder's waiters get already_consumed.
+      this.consumptionLocks.delete(receipt.requestId)
+      releaseSlot()
     }
   }
 

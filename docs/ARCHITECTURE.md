@@ -106,7 +106,10 @@ consumeReceipt(receipt, action)
   3. window open             → else receipt_expired
   4. validateIntentRequest   → embedded intent integrity (tampered_intent)
   5. hash(intent+action) === intentHash → else action_mismatch
-  6. not consumed before     → else already_consumed
+  6. not consumed before     → else already_consumed (a per-requestId
+     single-flight slot is claimed before the first await, so concurrent
+     submissions of one receipt resolve to exactly one success; failed
+     verifications release the slot without consuming)
   7. WebAuthn re-verification → else verification_failed / credential_unknown
   8. mark consumed + advance counter + audit
   → authorized

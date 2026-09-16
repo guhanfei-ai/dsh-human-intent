@@ -238,3 +238,107 @@ test('status reports service shape', async () => {
   assert.equal(status.pendingCount, 0)
   assert.equal(status.credentialCount, 0)
 })
+
+// --- Concurrent consumption (single-flight) ---
+
+function tally(results) {
+  const fulfilled = results.filter((result) => result.status === 'fulfilled')
+  const rejected = results.filter((result) => result.status === 'rejected')
+  return { fulfilled, rejected }
+}
+
+/** A structurally valid receipt carrying a signature over another action. */
+async function forgedVariant(receipt, request) {
+  const { createIntentRequest } = await import('../src/intent/request.js')
+  const forgedAction = { tool: 'shell.exec', arguments: { command: 'rm -rf /' } }
+  const forgedRequest = createIntentRequest({ action: forgedAction }, {
+    now: new Date(request.issuedAt).getTime(),
+    nonce: request.nonce,
+    requestId: request.requestId,
+  })
+  return { forged: { ...receipt, intent: forgedRequest, intentHash: forgedRequest.intentHash }, forgedAction }
+}
+
+test('two concurrent consumptions of one receipt: exactly one succeeds', async () => {
+  const { service, emulator } = await makeTestService()
+  await registerCredential(service, emulator)
+  const action = shellSpec({ command: 'rm -rf ./important-data' }).action
+  const { receipt } = await approvedIntent(service, emulator, shellSpec({ command: 'rm -rf ./important-data' }))
+  const results = await Promise.allSettled([
+    service.consumeReceipt(receipt, action),
+    service.consumeReceipt(receipt, action),
+  ])
+  const { fulfilled, rejected } = tally(results)
+  assert.equal(fulfilled.length, 1, `exactly one consumption must succeed, got ${fulfilled.length}`)
+  assert.equal(rejected.length, 1)
+  assert.ok(rejected[0].reason instanceof IntentConsumptionError)
+  assert.equal(rejected[0].reason.code, 'already_consumed')
+})
+
+test('ten concurrent consumptions of one receipt: exactly one succeeds', async () => {
+  const { service, emulator } = await makeTestService()
+  await registerCredential(service, emulator)
+  const action = shellSpec({ command: 'echo hi' }).action
+  const { receipt } = await approvedIntent(service, emulator, shellSpec({ command: 'echo hi' }))
+  const results = await Promise.allSettled(
+    Array.from({ length: 10 }, () => service.consumeReceipt(receipt, action)),
+  )
+  const { fulfilled, rejected } = tally(results)
+  assert.equal(fulfilled.length, 1, `exactly one consumption must succeed, got ${fulfilled.length}`)
+  assert.equal(rejected.length, 9)
+  for (const { reason } of rejected) {
+    assert.ok(reason instanceof IntentConsumptionError)
+    assert.equal(reason.code, 'already_consumed')
+  }
+})
+
+test('a failed verification does not permanently consume the receipt', async () => {
+  const { service, emulator } = await makeTestService()
+  await registerCredential(service, emulator)
+  const { request, receipt } = await approvedIntent(service, emulator, shellSpec({ command: 'echo hi' }))
+  const { forged, forgedAction } = await forgedVariant(receipt, request)
+  await rejection(service.consumeReceipt(forged, forgedAction), 'verification_failed')
+  assert.equal(service.consumed.has(request.requestId), false)
+  // The genuine receipt still authorizes exactly one execution afterwards.
+  const consumption = await service.consumeReceipt(receipt, request.action)
+  assert.equal(consumption.ok, true)
+})
+
+test('a concurrent waiter succeeds after the leading attempt fails verification', async () => {
+  const { service, emulator } = await makeTestService()
+  await registerCredential(service, emulator)
+  const { request, receipt } = await approvedIntent(service, emulator, shellSpec({ command: 'echo hi' }))
+  const { forged, forgedAction } = await forgedVariant(receipt, request)
+  const results = await Promise.allSettled([
+    service.consumeReceipt(forged, forgedAction),
+    service.consumeReceipt(receipt, request.action),
+  ])
+  const { fulfilled, rejected } = tally(results)
+  assert.equal(fulfilled.length, 1)
+  assert.equal(rejected.length, 1)
+  assert.ok(rejected[0].reason instanceof IntentConsumptionError)
+  assert.equal(rejected[0].reason.code, 'verification_failed')
+  // And the receipt is now consumed exactly once.
+  await rejection(service.consumeReceipt(receipt, request.action), 'already_consumed')
+})
+
+test('no stale consumption locks survive success, failure or contention', async () => {
+  const { service, emulator } = await makeTestService()
+  await registerCredential(service, emulator)
+  const { request, receipt } = await approvedIntent(service, emulator, shellSpec({ command: 'echo hi' }))
+  assert.equal(service.consumptionLocks.size, 0)
+  // Failure path releases its reservation.
+  const { forged, forgedAction } = await forgedVariant(receipt, request)
+  await rejection(service.consumeReceipt(forged, forgedAction), 'verification_failed')
+  assert.equal(service.consumptionLocks.size, 0)
+  // Contended success path releases its reservation.
+  await Promise.allSettled([
+    service.consumeReceipt(receipt, request.action),
+    service.consumeReceipt(receipt, request.action),
+  ])
+  assert.equal(service.consumptionLocks.size, 0)
+  // Plain success path releases its reservation too.
+  const { receipt: fresh } = await approvedIntent(service, emulator, shellSpec({ command: 'echo again' }))
+  await service.consumeReceipt(fresh, shellSpec({ command: 'echo again' }).action)
+  assert.equal(service.consumptionLocks.size, 0)
+})
