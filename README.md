@@ -1,5 +1,10 @@
 # dsh-human-intent
 
+> [!NOTE]
+> 🧪 **Experimental.** An early prototype from the [guhanfei-ai](https://github.com/guhanfei-ai) lab: the idea is serious, the code is a first cut. There is no stable release yet; APIs, data formats and behavior may change without notice, so it is not recommended for production. Ideas and issues are welcome.
+>
+> 🧪 **实验阶段。** 古寒飞AI 实验室里的早期原型：想法是认真的，代码还是第一版。目前没有稳定版本，接口和行为都可能随时调整，不建议用于生产环境。
+
 **Human intent verification and cryptographic action authorization for AI agents.**
 
 > AI can propose an action.
